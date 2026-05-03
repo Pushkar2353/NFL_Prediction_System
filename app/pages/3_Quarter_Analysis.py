@@ -78,6 +78,10 @@ def load_game_quarters(home: str, away: str, week: int):
         "away_score": int(rng.integers(10, 35)),
     }
 
+def hex_to_rgba(hex_color, alpha=0.7):
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2],16), int(hex_color[2:4],16), int(hex_color[4:6],16)
+    return f"rgba({r},{g},{b},{alpha})"
 
 # ── Header ──────────────────────────────────────────────────
 st.markdown("""
@@ -103,8 +107,8 @@ with tab1:
 
     # Team header
     st.markdown(f"""
-    <div style="background:linear-gradient(135deg,{p}44 0%,#07090f 100%);
-                border:1px solid {p}44;border-radius:16px;
+    <div style="background:linear-gradient(135deg,{hex_to_rgba(p,0.25)} 0%,#07090f 100%);
+                border:1px solid {hex_to_rgba(p,0.25)};border-radius:16px;
                 padding:1.25rem 1.5rem;margin-bottom:1.25rem;
                 display:flex;align-items:center;gap:1rem">
         <img src="{logo_url(team)}"
@@ -125,8 +129,10 @@ with tab1:
     # ── Avg EPA per quarter bar ──────────────────────────────
     qtr_means = {q: df_q[q].mean() for q in ["Q1","Q2","Q3","Q4"]}
     qtr_colors = {
-        "Q1": p, "Q2": s,
-        "Q3": p + "bb", "Q4": s + "bb",
+    "Q1": p,
+    "Q2": s,
+    "Q3": hex_to_rgba(p, 0.7),
+    "Q4": hex_to_rgba(s, 0.7),
     }
 
     c1, c2 = st.columns(2)
@@ -176,7 +182,7 @@ with tab1:
             r=scores + [scores[0]],
             theta=dims + [dims[0]],
             fill="toself",
-            fillcolor=p + "33",
+            fillcolor=hex_to_rgba(p, 0.2),
             line=dict(color=p, width=2.5),
         ))
         fig_radar.update_layout(
@@ -198,7 +204,7 @@ with tab1:
     st.markdown("##### EPA Trend by Quarter — All 18 Weeks")
     fig_trend = go.Figure()
     for qtr, color in zip(["Q1","Q2","Q3","Q4"],
-                          [p, s, p+"bb", s+"bb"]):
+                      [p, s, hex_to_rgba(p, 0.7), hex_to_rgba(s, 0.7)]):
         fig_trend.add_trace(go.Scatter(
             x=df_q["week"], y=df_q[qtr],
             name=qtr, line=dict(color=color, width=2),
@@ -267,7 +273,7 @@ with tab2:
     # Result banner
     st.markdown(f"""
     <div class="result-banner"
-         style="background:linear-gradient(135deg,{hp}33 0%,#07090f 50%,{ap_c}33 100%)">
+         style="background:linear-gradient(135deg,{hex_to_rgba(hp,0.2)} 0%,#07090f 50%,{hex_to_rgba(ap_c,0.2)} 100%)">
         <img src="{logo_url(home_t)}"
              style="width:52px;height:52px;object-fit:contain">
         <div class="rb-score" style="color:{hp}">{h_score}</div>
@@ -308,7 +314,7 @@ with tab2:
     fig_g.add_vrect(
         x0=qtrs.index(decisive) - 0.4,
         x1=qtrs.index(decisive) + 0.4,
-        fillcolor="#FFD70020", line_color="#FFD700",
+        fillcolor="rgba(255,215,0,0.125)", line_color="#FFD700",
         line_width=1.5, annotation_text=f"Decisive: {decisive}",
         annotation_position="top",
         annotation_font_color="#FFD700",

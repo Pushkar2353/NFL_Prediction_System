@@ -144,7 +144,8 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
-
+def hex_to_rgba(hex_color, alpha):
+    return f"rgba({int(hex_color[1:3],16)}, {int(hex_color[3:5],16)}, {int(hex_color[5:7],16)}, {alpha})"
 # ── EPA Trends ───────────────────────────────────────────────
 st.markdown('<div class="section-head">📈  Rolling EPA Trends</div>',
             unsafe_allow_html=True)
@@ -272,7 +273,7 @@ with eff1:
     fig_sack.add_trace(go.Scatter(
         x=df["week"], y=df["sack_rate"] * 100,
         fill="tozeroy",
-        fillcolor=s + "22",
+        fillcolor = f"rgba({int(s[1:3],16)}, {int(s[3:5],16)}, {int(s[5:7],16)}, 0.13)",
         line=dict(color=s, width=2),
         name="Sack Rate %",
         hovertemplate="<b>Wk %{x}</b>: %{y:.1f}%<extra></extra>",
@@ -293,7 +294,7 @@ with eff2:
     fig_3d.add_trace(go.Scatter(
         x=df["week"], y=df["third_down"] * 100,
         fill="tozeroy",
-        fillcolor=p + "22",
+        fillcolor = f"rgba({int(p[1:3],16)}, {int(p[3:5],16)}, {int(p[5:7],16)}, 0.13)",
         line=dict(color=p, width=2),
         name="3rd Down %",
         hovertemplate="<b>Wk %{x}</b>: %{y:.1f}%<extra></extra>",
@@ -322,7 +323,7 @@ fig_elo = go.Figure()
 fig_elo.add_trace(go.Scatter(
     x=df["week"], y=df["elo"],
     fill="tozeroy",
-    fillcolor=p + "18",
+    fillcolor = f"rgba({int(p[1:3],16)}, {int(p[3:5],16)}, {int(p[5:7],16)}, 0.09)",
     line=dict(color=p, width=2.5),
     name="ELO",
     hovertemplate="<b>Wk %{x}</b>: ELO %{y:.1f}<extra></extra>",
@@ -352,7 +353,12 @@ with dr1:
     fig_draft.add_trace(go.Bar(
         x=[str(y) for y in dk["years"]],
         y=dk["quality"],
-        marker_color=[p, s, p + "bb", s + "bb"],
+        marker_color = [
+    p,
+    s,
+    f"rgba({int(p[1:3],16)}, {int(p[3:5],16)}, {int(p[5:7],16)}, 0.73)",
+    f"rgba({int(s[1:3],16)}, {int(s[3:5],16)}, {int(s[5:7],16)}, 0.73)"
+],
         marker_line_color="#1a2234", marker_line_width=0.5,
         hovertemplate="<b>%{x} Draft</b>: %{y:.2f} quality<extra></extra>",
         text=[f"#{tp}" for tp in dk["top_pick"]],

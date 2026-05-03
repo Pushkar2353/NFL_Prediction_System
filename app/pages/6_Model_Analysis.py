@@ -108,6 +108,10 @@ body, .stApp { background:#07090f; color:#e2e8f0; }
 </style>
 """, unsafe_allow_html=True)
 
+def hex_to_rgba(hex_color, alpha=0.5):
+    hex_color = hex_color.lstrip('#')
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 
 # ════════════════════════════════════════════════════════════
 # DATA — validated 2024 holdout results for all algorithms
@@ -432,11 +436,11 @@ with tab_cm:
         text=text_mat, texttemplate="%{text}",
         textfont=dict(size=14, color="white"),
         colorscale=[
-            [0.0,  "#1a0a0a"],
-            [0.33, "#E24B4A66"],
-            [0.66, "#1D9E7566"],
-            [1.0,  "#0a1a0a"],
-        ],
+    [0.0,  "rgb(26,10,10)"],
+    [0.33, "rgba(226,75,74,0.4)"],
+    [0.66, "rgba(29,158,117,0.4)"],
+    [1.0,  "rgb(10,26,10)"],
+],
         showscale=False,
         hovertemplate="<b>%{x}</b><br>%{y}<br>Count: %{z}<extra></extra>",
     ))
@@ -728,7 +732,7 @@ with tab_feat:
             orientation="h",
             name=cat,
             marker_color=cat_color,
-            marker_line_color=cat_color + "88",
+            marker_line_color = hex_to_rgba(cat_color, 0.5),
             marker_line_width=1,
             hovertemplate=f"<b>{fname}</b><br>Importance: %{{x:.3f}}<extra></extra>",
         ))
@@ -944,7 +948,7 @@ with tab_cmp:
             r=vals + [vals[0]],
             theta=dims_radar + [dims_radar[0]],
             fill="toself",
-            fillcolor=adata["color"] + "22",
+            fillcolor=hex_to_rgba(adata["color"], 0.15),
             line=dict(color=adata["color"], width=2.5),
             name=f"{adata['icon']} {algo_name}",
             hovertemplate="%{theta}: %{r:.1f}<extra>" + algo_name + "</extra>",
@@ -1069,7 +1073,7 @@ with tab_roc:
         margin=dict(l=20, r=20, t=10, b=20),
         legend=dict(font=dict(color="#e2e8f0", size=11),
                     orientation="v", x=0.55, y=0.1,
-                    bgcolor="#0f152088",
+                    bgcolor = "rgba(15,21,32,0.53)",
                     bordercolor="#1a2234", borderwidth=1),
         xaxis=dict(gridcolor="#1a2234", title="False Positive Rate",
                    range=[0, 1], tickformat=".1f"),
@@ -1169,7 +1173,7 @@ with tab_roc:
         margin=dict(l=20, r=20, t=10, b=20),
         legend=dict(font=dict(color="#e2e8f0", size=11),
                     orientation="v", x=0.02, y=0.98,
-                    bgcolor="#0f152088",
+                    bgcolor = "rgba(15,21,32,0.53)",
                     bordercolor="#1a2234", borderwidth=1),
         xaxis=dict(gridcolor="#1a2234", title="Predicted Probability",
                    range=[0, 1], tickformat=".1f"),

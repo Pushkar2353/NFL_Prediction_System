@@ -75,6 +75,12 @@ body,.stApp{background:#07090f;color:#e2e8f0}
 </style>
 """, unsafe_allow_html=True)
 
+def hex_to_rgba(hex_color, alpha=0.2):
+    hex_color = hex_color.lstrip("#")
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 # ── Load model outputs (cached) ─────────────────────────────
 @st.cache_data(ttl=3600)
 def load_mc_results():
@@ -304,7 +310,7 @@ with tab4:
                 r=vals + [vals[0]],
                 theta=dims + [dims[0]],
                 fill="toself",
-                fillcolor=row["Primary"] + "33",
+                fillcolor=hex_to_rgba(row["Primary"], 0.2),
                 line=dict(color=row["Primary"], width=2.5),
                 name=row["Name"],
                 hovertemplate="%{theta}: %{r:.1f}<extra>" + label + "</extra>",
