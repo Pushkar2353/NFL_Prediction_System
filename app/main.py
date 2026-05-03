@@ -23,7 +23,7 @@
 
 import logging
 import sqlite3
-import sys
+import sys,os
 from pathlib import Path
 
 import pandas as pd
@@ -43,12 +43,226 @@ log = logging.getLogger(__name__)
 # Must be the VERY FIRST Streamlit call — before any other st.*
 # =============================================================
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from team_branding import inject_global_css, TEAM_COLORS, logo_url
+
+# ── Page config (MUST be first Streamlit call) ──────────────
 st.set_page_config(
-    page_title            = CFG.APP["page_title"],
-    page_icon             = CFG.APP["page_icon"],
-    layout                = CFG.APP["layout"],
-    initial_sidebar_state = "expanded",
+    page_title="NFL Super Bowl Predictor",
+    page_icon="🏈",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+# ── Inject global CSS ────────────────────────────────────────
+st.markdown(inject_global_css(), unsafe_allow_html=True)
+
+# ── Extra dark-theme overrides for main.py ───────────────────
+st.markdown("""
+<style>
+body, .stApp { background: #07090f; color: #e2e8f0; }
+
+/* Sidebar logo area */
+.sidebar-logo {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0.5rem 0 1.25rem;
+    border-bottom: 1px solid #1a2234;
+    margin-bottom: 1rem;
+}
+.sidebar-logo .app-title {
+    font-size: 16px; font-weight: 800; color: #ffffff; line-height: 1.2;
+}
+.sidebar-logo .app-sub {
+    font-size: 10px; color: #8899aa; text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+/* Nav pills in sidebar */
+.nav-section { font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: #4a5568; margin: 1.25rem 0 0.4rem; }
+
+/* Season badge */
+.season-badge {
+    display: inline-block;
+    background: #1a2e4a;
+    border: 1px solid #2a4a6a;
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #69BE28;
+    margin-bottom: 1rem;
+}
+
+/* Welcome cards */
+.welcome-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin: 1.25rem 0;
+}
+.welcome-card {
+    background: #0f1520;
+    border: 1px solid #1a2234;
+    border-radius: 14px;
+    padding: 1rem 1.125rem;
+    transition: border-color .2s;
+}
+.welcome-card:hover { border-color: #2a4a6a; }
+.welcome-card .wc-icon { font-size: 24px; margin-bottom: .35rem; }
+.welcome-card .wc-title { font-size: 13px; font-weight: 700; color: #e2e8f0;
+    margin-bottom: .2rem; }
+.welcome-card .wc-desc { font-size: 11px; color: #8899aa; line-height: 1.5; }
+
+/* SB result banner */
+.sb-banner {
+    background: linear-gradient(135deg, #002244 0%, #001833 60%, #69BE2822 100%);
+    border: 1px solid #69BE2844;
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    display: flex; align-items: center; gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.sb-banner img { width: 56px; height: 56px; object-fit: contain; }
+.sb-banner .sb-text { flex: 1; }
+.sb-banner .sb-title { font-size: 18px; font-weight: 800; color: #ffffff; }
+.sb-banner .sb-sub { font-size: 12px; color: #69BE28; margin-top: 2px; }
+.sb-banner .sb-prob {
+    font-size: 32px; font-weight: 800; color: #69BE28;
+    line-height: 1;
+}
+.sb-banner .sb-prob-lbl { font-size: 10px; color: #8899aa;
+    text-transform: uppercase; letter-spacing: .06em; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── DB init ──────────────────────────────────────────────────
+def init_database():
+    db_path = os.path.join(os.path.dirname(__file__), "..", "data", "users.db")
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS picks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            team TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            brier_score REAL
+        )""")
+    conn.commit()
+    conn.close()
+
+init_database()
+
+
+# ── Sidebar ───────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div class="sidebar-logo">
+        <span style="font-size:32px">🏈</span>
+        <div>
+            <div class="app-title">NFL Predictor</div>
+            <div class="app-sub">Super Bowl Champion AI</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="nav-section">Navigation</div>', unsafe_allow_html=True)
+    st.page_link("pages/1_Dashboard.py",       label="📊  Dashboard",         )
+    st.page_link("pages/2_Game_Predictor.py",  label="🎯  Game Predictor",     )
+    st.page_link("pages/3_Quarter_Analysis.py",label="📐  Quarter Analysis",   )
+    st.page_link("pages/4_Team_Deep_Dive.py",  label="🏈  Team Deep Dive",     )
+    st.page_link("pages/5_Leaderboard.py",     label="🏆  Leaderboard",        )
+    st.page_link("pages/6_Model_Analysis.py",  label="🔬  Model Analysis",      )
+
+    st.markdown('<div class="nav-section">Season</div>', unsafe_allow_html=True)
+    st.markdown('<div class="season-badge">2025 Season · Complete</div>',
+                unsafe_allow_html=True)
+
+    st.markdown('<div class="nav-section">Model Stats</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    col1.metric("Accuracy", "68.1%", "+5.1% vs ELO")
+    col2.metric("AUC",      "0.735", "+0.085 vs ELO")
+    col1.metric("Brier",    "0.213", "-0.015 vs ELO")
+    col2.metric("Tests",    "34/34", "All passing")
+
+    st.divider()
+    st.markdown('<div style="font-size:10px;color:#4a5568;text-align:center">'
+                'nflverse · nflreadpy · XGBoost · SHAP<br>'
+                'Monte Carlo 10,000 simulations</div>', unsafe_allow_html=True)
+
+
+# ── Main page ─────────────────────────────────────────────────
+st.markdown("""
+<div style="margin-bottom:1rem">
+    <h1 style="font-size:30px;font-weight:800;color:#ffffff;margin:0">
+        🏈 NFL Super Bowl Champion Predictor
+    </h1>
+    <p style="color:#8899aa;font-size:14px;margin:.35rem 0 0">
+        Machine Learning · ELO Ratings · EPA Analysis · Monte Carlo Simulation · SHAP Explainability
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# SB result banner — SEA
+sea_logo = logo_url("SEA")
+st.markdown(f"""
+<div class="sb-banner">
+    <img src="{sea_logo}" alt="SEA">
+    <div class="sb-text">
+        <div class="sb-title">Seattle Seahawks — Super Bowl LX Champions ✅</div>
+        <div class="sb-sub">
+            Our model ranked SEA #1 before the season ended · Feb 8 2026 · SEA 29 – NE 13
+        </div>
+    </div>
+    <div style="text-align:right">
+        <div class="sb-prob">19.7%</div>
+        <div class="sb-prob-lbl">SB Probability</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Page cards
+st.markdown("""
+<div class="welcome-grid">
+    <div class="welcome-card">
+        <div class="wc-icon">📊</div>
+        <div class="wc-title">Dashboard</div>
+        <div class="wc-desc">All 32 teams ranked by Super Bowl probability with team colors & logos</div>
+    </div>
+    <div class="welcome-card">
+        <div class="wc-icon">🎯</div>
+        <div class="wc-title">Game Predictor</div>
+        <div class="wc-desc">Pick any matchup — get calibrated win probability + SHAP explanation</div>
+    </div>
+    <div class="welcome-card">
+        <div class="wc-icon">📐</div>
+        <div class="wc-title">Quarter Analysis</div>
+        <div class="wc-desc">Q1–Q4 EPA breakdown for any completed game with team profiling</div>
+    </div>
+    <div class="welcome-card">
+        <div class="wc-icon">🏈</div>
+        <div class="wc-title">Team Deep Dive</div>
+        <div class="wc-desc">Full season EPA trends, injuries, sack rate and draft class quality</div>
+    </div>
+    <div class="welcome-card">
+        <div class="wc-icon">🏆</div>
+        <div class="wc-title">Leaderboard</div>
+        <div class="wc-desc">Pick your Super Bowl champion and track your Brier score vs the community</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 
 # =============================================================

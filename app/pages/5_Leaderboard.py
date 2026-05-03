@@ -18,7 +18,7 @@
 
 import hashlib
 import sqlite3
-import sys
+import sys,os
 from pathlib import Path
 
 import pandas as pd
@@ -29,11 +29,438 @@ ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 from config import CFG
 
-st.set_page_config(
-    page_title = "Leaderboard — NFL SB Predictor",
-    page_icon  = "🏆",
-    layout     = "wide",
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from app.team_branding import (
+    inject_global_css, TEAM_COLORS, logo_url,
+    primary, secondary, full_name,
 )
+
+st.set_page_config(page_title="Leaderboard · NFL",
+                   page_icon="🏆", layout="wide")
+st.markdown(inject_global_css(), unsafe_allow_html=True)
+st.markdown("""
+<style>
+body,.stApp{background:#07090f;color:#e2e8f0}
+
+/* Podium */
+.podium{display:flex;align-items:flex-end;justify-content:center;
+        gap:12px;margin:1.25rem 0}
+.pod-card{border-radius:14px;padding:1rem .875rem;
+          text-align:center;border:1px solid #1a2234;
+          transition:transform .2s}
+.pod-card:hover{transform:translateY(-3px)}
+.pod-rank{font-size:26px;margin-bottom:.35rem}
+.pod-name{font-size:13px;font-weight:700;color:#fff;margin-bottom:.2rem}
+.pod-score{font-size:11px;margin-top:.35rem}
+
+/* Leaderboard rows */
+.lb-row{
+    display:flex;align-items:center;gap:.875rem;
+    padding:.7rem 1rem;
+    background:#0f1520;border:1px solid #1a2234;
+    border-radius:12px;margin-bottom:6px;
+    transition:border-color .2s;
+}
+.lb-row:hover{border-color:#2a4a6a}
+.lb-rank{font-size:14px;font-weight:700;color:#4a5568;min-width:28px;text-align:right}
+.lb-name{flex:1;font-size:13px;font-weight:600;color:#e2e8f0}
+.lb-team{display:flex;align-items:center;gap:6px;font-size:12px;color:#8899aa}
+.lb-score{font-size:15px;font-weight:800;min-width:56px;text-align:right}
+.lb-bar-wrap{width:80px;height:7px;background:#1a2234;border-radius:3px;overflow:hidden}
+.lb-bar{height:100%;border-radius:3px}
+
+/* Auth form */
+.auth-card{
+    background:#0f1520;border:1px solid #1a2234;
+    border-radius:16px;padding:1.5rem 1.75rem;
+    max-width:400px;margin:0 auto;
+}
+.auth-card h3{font-size:18px;font-weight:700;color:#fff;margin-bottom:1rem}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── DB helpers ───────────────────────────────────────────────
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "users.db")
+
+def get_conn():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+def hash_pw(pw: str) -> str:
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+def register_user(username: str, password: str) -> tuple[bool, str]:
+    try:
+        conn = get_conn()
+        conn.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username.strip(), hash_pw(password)),
+        )
+        conn.commit(); conn.close()
+        return True, "Account created!"
+    except sqlite3.IntegrityError:
+        return False, "Username already taken."
+
+def login_user(username: str, password: str) -> tuple[bool, str]:
+    conn  = get_conn()
+    row   = conn.execute(
+        "SELECT id FROM users WHERE username=? AND password_hash=?",
+        (username.strip(), hash_pw(password)),
+    ).fetchone()
+    conn.close()
+    if row:
+        return True, row[0]
+    return False, "Invalid username or password."
+
+def submit_pick(user_id: int, team: str, confidence: float):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO picks (user_id, team, confidence) VALUES (?,?,?)",
+        (user_id, team, confidence),
+    )
+    conn.commit(); conn.close()
+
+def load_leaderboard() -> pd.DataFrame:
+    conn = get_conn()
+    df   = pd.read_sql_query("""
+        SELECT u.username, p.team, p.confidence, p.brier_score, p.submitted_at
+        FROM picks p JOIN users u ON p.user_id = u.id
+        ORDER BY p.submitted_at DESC
+    """, conn)
+    conn.close()
+
+    # Season complete — SEA won. Compute Brier if not set.
+    SEA_WON = 1
+    if len(df):
+        df["brier_score"] = df.apply(
+            lambda r: (r["confidence"] / 100 - (1 if r["team"] == "SEA" else 0)) ** 2
+            if pd.isna(r["brier_score"]) else r["brier_score"],
+            axis=1,
+        )
+        df = df.sort_values("brier_score")
+    return df
+
+
+# ── Header ──────────────────────────────────────────────────
+st.markdown("""
+<div style='margin-bottom:1.25rem'>
+    <h1 style='font-size:26px;font-weight:800;color:#fff;margin:0'>
+        🏆 Community Leaderboard
+    </h1>
+    <p style='color:#8899aa;font-size:13px;margin:.25rem 0 0'>
+        Pick your Super Bowl champion · track your Brier score · season complete
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# SB result banner
+st.markdown(f"""
+<div style="background:linear-gradient(135deg,#002244 0%,#001833 70%,#69BE2818 100%);
+            border:1px solid #69BE2844;border-radius:14px;
+            padding:1rem 1.5rem;margin-bottom:1.25rem;
+            display:flex;align-items:center;gap:1rem">
+    <img src="{logo_url('SEA')}"
+         style="width:52px;height:52px;object-fit:contain">
+    <div style="flex:1">
+        <div style="font-size:16px;font-weight:800;color:#fff">
+            Seattle Seahawks won Super Bowl LX ✅
+        </div>
+        <div style="font-size:12px;color:#69BE28;margin-top:2px">
+            SEA 29 – NE 13 · Feb 8 2026 · Brier scoring complete
+        </div>
+    </div>
+    <div style="text-align:right">
+        <div style="font-size:11px;color:#8899aa">Lower Brier = better</div>
+        <div style="font-size:11px;color:#8899aa">SEA @ 80% → 0.04 🏆</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+tab_lb, tab_pick, tab_auth = st.tabs(
+    ["🏅 Leaderboard", "🎯 Submit Pick", "🔐 Account"])
+
+# ════ TAB 1 — LEADERBOARD ════════════════════════════════════
+with tab_lb:
+    lb_df = load_leaderboard()
+
+    if lb_df.empty:
+        st.info("No picks yet — be the first to submit!")
+    else:
+        # ── Podium (top 3) ───────────────────────────────────
+        medals = ["🥇", "🥈", "🥉"]
+        pod_heights = ["160px", "130px", "110px"]
+        pod_colors  = ["#FFD700", "#C0C0C0", "#CD7F32"]
+        pod_bg      = ["#1a1500", "#141414", "#120c00"]
+
+        top3 = lb_df.head(3)
+        if len(top3) >= 1:
+            st.markdown('<div class="podium">', unsafe_allow_html=True)
+            # Reorder: 2nd, 1st, 3rd for podium look
+            order = [1, 0, 2] if len(top3) >= 3 else list(range(len(top3)))
+            cols  = st.columns(len(order))
+            for col_idx, rank_idx in enumerate(order):
+                if rank_idx >= len(top3):
+                    continue
+                row        = top3.iloc[rank_idx]
+                medal      = medals[rank_idx]
+                clr        = pod_colors[rank_idx]
+                bg         = pod_bg[rank_idx]
+                team       = row["team"]
+                conf_color = clr
+                brier_val  = f"{row['brier_score']:.4f}"
+
+                with cols[col_idx]:
+                    st.markdown(f"""
+                    <div class="pod-card"
+                         style="background:{bg};border-color:{clr}44;
+                                height:{pod_heights[rank_idx]}">
+                        <div class="pod-rank">{medal}</div>
+                        <img src="{logo_url(team)}"
+                             style="width:36px;height:36px;object-fit:contain">
+                        <div class="pod-name">{row['username']}</div>
+                        <div style="font-size:11px;color:#8899aa">
+                            Picked {full_name(team)}
+                        </div>
+                        <div class="pod-score" style="color:{clr}">
+                            Brier {brier_val}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown("#### All Picks")
+
+        min_b = lb_df["brier_score"].min() if len(lb_df) else 1
+        max_b = lb_df["brier_score"].max() if len(lb_df) else 1
+
+        for i, row in lb_df.reset_index(drop=True).iterrows():
+            rank      = i + 1
+            team      = row["team"]
+            p_c       = primary(team)
+            s_c       = secondary(team)
+            brier     = row["brier_score"]
+            # bar: lower brier = longer green bar
+            bar_pct   = max(0, 1 - (brier - min_b) / (max_b - min_b + 1e-9))
+            bar_color = ("#1D9E75" if brier < 0.10 else
+                         "#EF9F27" if brier < 0.25 else "#E24B4A")
+            medal_icon = (medals[rank - 1] if rank <= 3 else
+                          f"<span style='color:#4a5568'>#{rank}</span>")
+
+            st.markdown(f"""
+            <div class="lb-row">
+                <div class="lb-rank">{medal_icon}</div>
+                <img src="{logo_url(team)}"
+                     style="width:30px;height:30px;object-fit:contain">
+                <div class="lb-name">{row['username']}</div>
+                <div class="lb-team">
+                    <span style="color:{p_c};font-weight:600">{team}</span>
+                    @ {row['confidence']:.0f}%
+                </div>
+                <div class="lb-bar-wrap">
+                    <div class="lb-bar"
+                         style="width:{bar_pct*100:.1f}%;background:{bar_color}">
+                    </div>
+                </div>
+                <div class="lb-score" style="color:{bar_color}">
+                    {brier:.4f}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Pick distribution chart
+        st.markdown("---")
+        st.markdown("#### Pick Distribution")
+        pick_counts = lb_df["team"].value_counts().head(12)
+        fig_picks = go.Figure()
+        for team_abbr, count in pick_counts.items():
+            fig_picks.add_trace(go.Bar(
+                x=[team_abbr], y=[count],
+                name=team_abbr,
+                marker_color=primary(team_abbr),
+                marker_line_color=secondary(team_abbr),
+                marker_line_width=1.5,
+                hovertemplate=(
+                    f"<b>{full_name(team_abbr)}</b><br>"
+                    f"{count} picks<extra></extra>"
+                ),
+            ))
+        fig_picks.update_layout(
+            showlegend=False,
+            paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+            font_color="#e2e8f0", height=240, bargap=0.25,
+            margin=dict(l=20,r=20,t=10,b=20),
+            xaxis=dict(gridcolor="#1a2234"),
+            yaxis=dict(gridcolor="#1a2234", title="# of Picks"),
+        )
+        st.plotly_chart(fig_picks, use_container_width=True)
+
+# ════ TAB 2 — SUBMIT PICK ════════════════════════════════════
+with tab_pick:
+    if "user_id" not in st.session_state:
+        st.warning("Please log in first (Account tab) to submit a pick.")
+    else:
+        uid      = st.session_state["user_id"]
+        uname    = st.session_state.get("username", "User")
+        existing = load_leaderboard()
+        user_row = existing[existing["username"] == uname] \
+                   if len(existing) else pd.DataFrame()
+
+        if len(user_row):
+            pu = user_row.iloc[0]
+            st.markdown(f"""
+            <div style="background:#0f1520;border:1px solid #1a2234;
+                        border-radius:14px;padding:1.25rem;margin-bottom:1rem;
+                        display:flex;align-items:center;gap:1rem">
+                <img src="{logo_url(pu['team'])}"
+                     style="width:48px;height:48px;object-fit:contain">
+                <div>
+                    <div style="font-size:14px;font-weight:700;color:#fff">
+                        Your current pick: {full_name(pu['team'])}
+                    </div>
+                    <div style="font-size:12px;color:#8899aa;margin-top:2px">
+                        Confidence: {pu['confidence']:.0f}% ·
+                        Brier Score: {pu['brier_score']:.4f}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("#### Submit or Update Your Pick")
+
+        # Team picker with logo preview
+        pick_team = st.selectbox(
+            "Select your Super Bowl Champion",
+            sorted(TEAM_COLORS.keys()),
+            format_func=full_name,
+            key="pick_team_sel",
+        )
+
+        # Preview selected team card
+        pt_primary   = primary(pick_team)
+        pt_secondary = secondary(pick_team)
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,{pt_primary}44 0%,#07090f 100%);
+                    border:1px solid {pt_primary}55;border-radius:14px;
+                    padding:1rem 1.25rem;margin:.75rem 0;
+                    display:flex;align-items:center;gap:1rem">
+            <img src="{logo_url(pick_team)}"
+                 style="width:56px;height:56px;object-fit:contain">
+            <div>
+                <div style="font-size:18px;font-weight:800;color:#fff">
+                    {full_name(pick_team)}
+                </div>
+                <div style="font-size:12px;color:{pt_secondary};margin-top:2px">
+                    {TEAM_COLORS[pick_team]['conf']} ·
+                    {TEAM_COLORS[pick_team]['div']}
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        confidence = st.slider(
+            "Confidence level (%)",
+            min_value=10, max_value=90, value=60, step=10,
+            help="How confident are you in this pick? "
+                 "Honest calibration beats overconfidence.",
+        )
+
+        # Live Brier preview
+        brier_win  = (confidence / 100 - 1) ** 2
+        brier_loss = (confidence / 100 - 0) ** 2
+        b1, b2     = st.columns(2)
+        b1.markdown(f"""
+        <div style="background:#0a1a0a;border:1px solid #1D9E75;
+                    border-radius:10px;padding:.75rem;text-align:center">
+            <div style="font-size:11px;color:#8899aa">If {pick_team} wins</div>
+            <div style="font-size:24px;font-weight:800;color:#1D9E75">
+                {brier_win:.4f}
+            </div>
+            <div style="font-size:10px;color:#69BE28">Lower is better 🏆</div>
+        </div>
+        """, unsafe_allow_html=True)
+        b2.markdown(f"""
+        <div style="background:#1a0a0a;border:1px solid #E24B4A;
+                    border-radius:10px;padding:.75rem;text-align:center">
+            <div style="font-size:11px;color:#8899aa">If {pick_team} loses</div>
+            <div style="font-size:24px;font-weight:800;color:#E24B4A">
+                {brier_loss:.4f}
+            </div>
+            <div style="font-size:10px;color:#ff6b6b">
+                Overconfident picks hurt
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("")
+        if st.button("✅  Submit Pick", type="primary",
+                     use_container_width=True):
+            submit_pick(uid, pick_team, confidence)
+            st.success(f"Pick submitted! {full_name(pick_team)} "
+                       f"@ {confidence}% confidence.")
+            st.rerun()
+
+# ════ TAB 3 — ACCOUNT ════════════════════════════════════════
+with tab_auth:
+    if "user_id" in st.session_state:
+        st.success(f"Logged in as **{st.session_state['username']}**")
+        if st.button("Log out"):
+            del st.session_state["user_id"]
+            del st.session_state["username"]
+            st.rerun()
+    else:
+        auth_mode = st.radio("", ["Login", "Register"],
+                             horizontal=True, key="auth_mode")
+
+        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
+        st.markdown(f'<h3>{"🔑 Login" if auth_mode=="Login" else "✨ Create Account"}</h3>',
+                    unsafe_allow_html=True)
+
+        username_inp = st.text_input("Username", key="auth_user",
+                                     placeholder="your_username")
+        password_inp = st.text_input("Password", type="password",
+                                     key="auth_pass",
+                                     placeholder="••••••••")
+
+        if auth_mode == "Login":
+            if st.button("Login", type="primary", use_container_width=True):
+                ok, result = login_user(username_inp, password_inp)
+                if ok:
+                    st.session_state["user_id"]   = result
+                    st.session_state["username"]  = username_inp.strip()
+                    st.success("Logged in! 🎉")
+                    st.rerun()
+                else:
+                    st.error(result)
+        else:
+            if st.button("Create Account", type="primary",
+                         use_container_width=True):
+                if len(username_inp.strip()) < 3:
+                    st.error("Username must be at least 3 characters.")
+                elif len(password_inp) < 6:
+                    st.error("Password must be at least 6 characters.")
+                else:
+                    ok, msg = register_user(username_inp, password_inp)
+                    if ok:
+                        st.success(msg + " Please log in.")
+                    else:
+                        st.error(msg)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown("""
+        <div style="background:#0f1520;border:1px solid #1a2234;
+                    border-radius:12px;padding:.875rem 1rem">
+            <div style="font-size:13px;font-weight:700;color:#e2e8f0;
+                        margin-bottom:.35rem">How Brier Scoring Works</div>
+            <div style="font-size:12px;color:#8899aa;line-height:1.6">
+                Brier = (confidence/100 − outcome)² · Lower is better<br>
+                Pick SEA @ 80% → SEA wins → Brier = 0.04 🏆<br>
+                Pick KC @ 70% → SEA wins → Brier = 0.49 ❌<br>
+                Honest calibration always beats overconfidence.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # Known Super Bowl winners by season
 KNOWN_WINNERS = {

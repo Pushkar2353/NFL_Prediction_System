@@ -12,7 +12,7 @@
 #   4. Draft analysis   — talent scores and EPA delta by season
 # =============================================================
 
-import sys
+import sys,os
 from pathlib import Path
 
 import numpy  as np
@@ -24,11 +24,390 @@ ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 from config import CFG
 
-st.set_page_config(
-    page_title = "Team Deep Dive — NFL SB Predictor",
-    page_icon  = "🏈",
-    layout     = "wide",
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from app.team_branding import (
+    inject_global_css, TEAM_COLORS, logo_url,
+    primary, secondary, full_name,
 )
+
+st.set_page_config(page_title="Team Deep Dive · NFL",
+                   page_icon="🏈", layout="wide")
+st.markdown(inject_global_css(), unsafe_allow_html=True)
+st.markdown("""
+<style>
+body,.stApp{background:#07090f;color:#e2e8f0}
+.section-head{
+    font-size:15px;font-weight:700;color:#e2e8f0;
+    margin:1.25rem 0 .6rem;
+    padding-bottom:.4rem;
+    border-bottom:1px solid #1a2234;
+}
+</style>
+""", unsafe_allow_html=True)
+
+ALL_TEAMS = sorted(TEAM_COLORS.keys())
+
+
+# ── Mock data loaders — replace with real model outputs ─────
+@st.cache_data(ttl=600)
+def load_team_season(team: str) -> pd.DataFrame:
+    rng  = np.random.default_rng(hash(team) % 2**32)
+    wks  = list(range(1, 19))
+    base = rng.uniform(-0.05, 0.15)
+    off  = rng.normal(base + 0.05, 0.08, 18)
+    def_ = rng.normal(-base - 0.02, 0.07, 18)
+    pas  = off + rng.normal(0.03, 0.04, 18)
+    rus  = off - rng.normal(0.02, 0.04, 18)
+    to_m = rng.integers(-3, 4, 18).astype(float)
+    sack = rng.uniform(0.04, 0.12, 18)
+    td3  = rng.uniform(0.30, 0.52, 18)
+    inj  = rng.uniform(0, 4, 18)
+    wins = (rng.random(18) > 0.42).astype(int)
+    elo  = 1500 + np.cumsum(rng.normal(3, 12, 18))
+    return pd.DataFrame({
+        "week": wks,
+        "off_epa": off, "def_epa": def_,
+        "pass_epa": pas, "rush_epa": rus,
+        "turnover_margin": to_m,
+        "sack_rate": sack, "third_down": td3,
+        "injury_impact": inj,
+        "won": wins, "elo": elo,
+    })
+
+
+@st.cache_data(ttl=600)
+def load_draft_data(team: str):
+    rng    = np.random.default_rng((hash(team) + 99) % 2**32)
+    years  = [2022, 2023, 2024, 2025]
+    qual   = rng.uniform(0.35, 0.75, 4).tolist()
+    top_pk = [int(rng.integers(1, 120)) for _ in years]
+    return {
+        "years": years,
+        "quality": qual,
+        "top_pick": top_pk,
+    }
+
+
+# ── Team selector ────────────────────────────────────────────
+team = st.selectbox("Select Team", ALL_TEAMS,
+                    format_func=full_name, key="dd_team")
+
+p  = primary(team)
+s  = secondary(team)
+df = load_team_season(team)
+dk = load_draft_data(team)
+
+# ── Team header banner ───────────────────────────────────────
+wins_total  = int(df["won"].sum())
+losses_total = 18 - wins_total
+avg_epa_off = float(df["off_epa"].mean())
+avg_to      = float(df["turnover_margin"].mean())
+last_elo    = float(df["elo"].iloc[-1])
+
+st.markdown(f"""
+<div style="background:linear-gradient(135deg,{p} 0%,{p}aa 50%,{s}22 100%);
+            border-radius:18px;padding:1.5rem 2rem;margin-bottom:1.25rem;
+            display:flex;align-items:center;gap:1.5rem;
+            border:1px solid {s}33">
+    <img src="{logo_url(team)}"
+         style="width:88px;height:88px;object-fit:contain;
+                filter:drop-shadow(0 2px 10px rgba(0,0,0,0.6))">
+    <div style="flex:1">
+        <div style="font-size:28px;font-weight:800;color:#ffffff;line-height:1.2">
+            {full_name(team)}
+        </div>
+        <div style="font-size:13px;color:{s};font-weight:600;margin-top:3px">
+            2025 Season · {TEAM_COLORS[team]['conf']} {TEAM_COLORS[team]['div']}
+        </div>
+    </div>
+    <div style="display:flex;gap:1.5rem;text-align:center">
+        <div>
+            <div style="font-size:30px;font-weight:800;color:#fff">{wins_total}–{losses_total}</div>
+            <div style="font-size:10px;color:rgba(255,255,255,.6);text-transform:uppercase;
+                        letter-spacing:.06em">Record</div>
+        </div>
+        <div>
+            <div style="font-size:30px;font-weight:800;
+                        color:{'#69BE28' if avg_epa_off>0 else '#ff6b6b'}">
+                {avg_epa_off:+.3f}
+            </div>
+            <div style="font-size:10px;color:rgba(255,255,255,.6);text-transform:uppercase;
+                        letter-spacing:.06em">Off EPA</div>
+        </div>
+        <div>
+            <div style="font-size:30px;font-weight:800;color:#fff">
+                {last_elo:.0f}
+            </div>
+            <div style="font-size:10px;color:rgba(255,255,255,.6);text-transform:uppercase;
+                        letter-spacing:.06em">ELO Rating</div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── EPA Trends ───────────────────────────────────────────────
+st.markdown('<div class="section-head">📈  Rolling EPA Trends</div>',
+            unsafe_allow_html=True)
+
+fig_epa = go.Figure()
+traces = [
+    ("off_epa",  "Offensive EPA",  p,          None),
+    ("def_epa",  "Defensive EPA",  s,          [4, 3]),
+    ("pass_epa", "Pass EPA",       "#69BE28",  None),
+    ("rush_epa", "Rush EPA",       "#FFB612",  [2, 2]),
+]
+for col, name, color, dash in traces:
+    fig_epa.add_trace(go.Scatter(
+        x=df["week"], y=df[col],
+        name=name,
+        line=dict(color=color, width=2,
+                  dash="dot" if dash else None),
+        mode="lines",
+        hovertemplate=f"<b>Wk %{{x}}</b> {name}: %{{y:.3f}}<extra></extra>",
+    ))
+
+# W/L markers at y=0
+for _, row in df.iterrows():
+    sym = "triangle-up" if row["won"] else "triangle-down"
+    clr = "#1D9E75"     if row["won"] else "#E24B4A"
+    fig_epa.add_trace(go.Scatter(
+        x=[row["week"]], y=[0], mode="markers",
+        marker=dict(symbol=sym, size=10, color=clr),
+        showlegend=False,
+        hovertemplate=("W" if row["won"] else "L") +
+                      f" Wk {int(row['week'])}<extra></extra>",
+    ))
+
+fig_epa.add_hline(y=0, line_color="#4a5568", line_width=1)
+fig_epa.update_layout(
+    paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+    font_color="#e2e8f0", height=310,
+    margin=dict(l=20, r=20, t=10, b=20),
+    legend=dict(orientation="h", yanchor="bottom", y=1,
+                font=dict(color="#e2e8f0", size=11)),
+    xaxis=dict(gridcolor="#1a2234", title="Week",
+               dtick=1, tickfont=dict(size=10)),
+    yaxis=dict(gridcolor="#1a2234", title="EPA per Play"),
+)
+st.plotly_chart(fig_epa, use_container_width=True)
+
+# ── Turnover + Injury side-by-side ───────────────────────────
+st.markdown('<div class="section-head">🔄  Turnovers & Injury Impact</div>',
+            unsafe_allow_html=True)
+
+ti1, ti2 = st.columns(2)
+
+with ti1:
+    fig_to = go.Figure()
+    fig_to.add_trace(go.Bar(
+        x=df["week"],
+        y=df["turnover_margin"],
+        name="Turnover Margin",
+        marker_color=[p if v >= 0 else "#E24B4A"
+                      for v in df["turnover_margin"]],
+        marker_line_color="#1a2234", marker_line_width=0.5,
+        hovertemplate="<b>Wk %{x}</b>: %{y:+d} turnovers<extra></extra>",
+    ))
+    fig_to.add_hline(y=0, line_color="#4a5568", line_width=1)
+    fig_to.update_layout(
+        title=dict(text="Turnover Margin by Week",
+                   font=dict(color="#e2e8f0", size=13)),
+        paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+        font_color="#e2e8f0", height=260, showlegend=False,
+        margin=dict(l=20,r=20,t=35,b=20),
+        xaxis=dict(gridcolor="#1a2234", dtick=2, tickfont=dict(size=10)),
+        yaxis=dict(gridcolor="#1a2234"),
+    )
+    st.plotly_chart(fig_to, use_container_width=True)
+
+with ti2:
+    fig_inj = go.Figure()
+    # Injury bars
+    fig_inj.add_trace(go.Bar(
+        x=df["week"], y=df["injury_impact"],
+        name="Injury Impact",
+        marker_color=[f"rgba({int(p[1:3],16)},"
+                      f"{int(p[3:5],16)},"
+                      f"{int(p[5:7],16)},"
+                      f"{0.4 + v/6:.2f})"
+                      for v in df["injury_impact"]],
+        marker_line_color="#1a2234", marker_line_width=0.5,
+        hovertemplate="<b>Wk %{x}</b>: %{y:.2f} injury impact<extra></extra>",
+    ))
+    # W/L line
+    fig_inj.add_trace(go.Scatter(
+        x=df["week"],
+        y=[2 if w else -0.5 for w in df["won"]],
+        mode="markers",
+        marker=dict(
+            symbol=["triangle-up" if w else "triangle-down" for w in df["won"]],
+            size=10,
+            color=["#1D9E75" if w else "#E24B4A" for w in df["won"]],
+        ),
+        name="W/L",
+        hovertemplate="%{text}<extra></extra>",
+        text=["W" if w else "L" for w in df["won"]],
+    ))
+    fig_inj.update_layout(
+        title=dict(text="Injury Impact + W/L Overlay",
+                   font=dict(color="#e2e8f0", size=13)),
+        paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+        font_color="#e2e8f0", height=260,
+        margin=dict(l=20,r=20,t=35,b=20),
+        legend=dict(font=dict(color="#e2e8f0", size=10),
+                    orientation="h", yanchor="bottom", y=1),
+        xaxis=dict(gridcolor="#1a2234", dtick=2, tickfont=dict(size=10)),
+        yaxis=dict(gridcolor="#1a2234", title="Impact Score"),
+    )
+    st.plotly_chart(fig_inj, use_container_width=True)
+
+# ── Efficiency metrics ───────────────────────────────────────
+st.markdown('<div class="section-head">⚡  Efficiency — Sack Rate & 3rd Down</div>',
+            unsafe_allow_html=True)
+
+eff1, eff2 = st.columns(2)
+
+with eff1:
+    fig_sack = go.Figure()
+    fig_sack.add_trace(go.Scatter(
+        x=df["week"], y=df["sack_rate"] * 100,
+        fill="tozeroy",
+        fillcolor=s + "22",
+        line=dict(color=s, width=2),
+        name="Sack Rate %",
+        hovertemplate="<b>Wk %{x}</b>: %{y:.1f}%<extra></extra>",
+    ))
+    fig_sack.update_layout(
+        title=dict(text="Rolling Sack Rate (%)",
+                   font=dict(color="#e2e8f0", size=13)),
+        paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+        font_color="#e2e8f0", height=230, showlegend=False,
+        margin=dict(l=20,r=20,t=35,b=20),
+        xaxis=dict(gridcolor="#1a2234", dtick=2, tickfont=dict(size=10)),
+        yaxis=dict(gridcolor="#1a2234", ticksuffix="%"),
+    )
+    st.plotly_chart(fig_sack, use_container_width=True)
+
+with eff2:
+    fig_3d = go.Figure()
+    fig_3d.add_trace(go.Scatter(
+        x=df["week"], y=df["third_down"] * 100,
+        fill="tozeroy",
+        fillcolor=p + "22",
+        line=dict(color=p, width=2),
+        name="3rd Down %",
+        hovertemplate="<b>Wk %{x}</b>: %{y:.1f}%<extra></extra>",
+    ))
+    fig_3d.add_hline(y=40, line_color="#4a5568",
+                     line_dash="dot",
+                     annotation_text="League avg ~40%",
+                     annotation_font_color="#4a5568",
+                     annotation_font_size=10)
+    fig_3d.update_layout(
+        title=dict(text="3rd Down Conversion Rate (%)",
+                   font=dict(color="#e2e8f0", size=13)),
+        paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+        font_color="#e2e8f0", height=230, showlegend=False,
+        margin=dict(l=20,r=20,t=35,b=20),
+        xaxis=dict(gridcolor="#1a2234", dtick=2, tickfont=dict(size=10)),
+        yaxis=dict(gridcolor="#1a2234", ticksuffix="%", range=[20, 65]),
+    )
+    st.plotly_chart(fig_3d, use_container_width=True)
+
+# ── ELO rating progression ───────────────────────────────────
+st.markdown('<div class="section-head">📡  ELO Rating Progression</div>',
+            unsafe_allow_html=True)
+
+fig_elo = go.Figure()
+fig_elo.add_trace(go.Scatter(
+    x=df["week"], y=df["elo"],
+    fill="tozeroy",
+    fillcolor=p + "18",
+    line=dict(color=p, width=2.5),
+    name="ELO",
+    hovertemplate="<b>Wk %{x}</b>: ELO %{y:.1f}<extra></extra>",
+))
+fig_elo.add_hline(y=1500, line_color="#4a5568", line_dash="dot",
+                  annotation_text="League average (1500)",
+                  annotation_font_color="#4a5568",
+                  annotation_font_size=10)
+fig_elo.update_layout(
+    paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+    font_color="#e2e8f0", height=240, showlegend=False,
+    margin=dict(l=20,r=20,t=10,b=20),
+    xaxis=dict(gridcolor="#1a2234", title="Week", dtick=1,
+               tickfont=dict(size=10)),
+    yaxis=dict(gridcolor="#1a2234", title="ELO Rating"),
+)
+st.plotly_chart(fig_elo, use_container_width=True)
+
+# ── Draft Analysis ───────────────────────────────────────────
+st.markdown('<div class="section-head">📋  Draft Class Quality</div>',
+            unsafe_allow_html=True)
+
+dr1, dr2 = st.columns([1.5, 2])
+
+with dr1:
+    fig_draft = go.Figure()
+    fig_draft.add_trace(go.Bar(
+        x=[str(y) for y in dk["years"]],
+        y=dk["quality"],
+        marker_color=[p, s, p + "bb", s + "bb"],
+        marker_line_color="#1a2234", marker_line_width=0.5,
+        hovertemplate="<b>%{x} Draft</b>: %{y:.2f} quality<extra></extra>",
+        text=[f"#{tp}" for tp in dk["top_pick"]],
+        textposition="outside",
+        textfont=dict(color="#e2e8f0", size=11),
+    ))
+    fig_draft.add_hline(y=0.5, line_color="#4a5568", line_dash="dot",
+                        annotation_text="League avg",
+                        annotation_font_color="#4a5568",
+                        annotation_font_size=10)
+    fig_draft.update_layout(
+        title=dict(text="Draft Class Quality Score",
+                   font=dict(color="#e2e8f0", size=13)),
+        paper_bgcolor="#07090f", plot_bgcolor="#07090f",
+        font_color="#e2e8f0", height=280, showlegend=False,
+        margin=dict(l=20,r=20,t=35,b=20),
+        xaxis=dict(gridcolor="#1a2234"),
+        yaxis=dict(gridcolor="#1a2234", range=[0, 0.9]),
+    )
+    st.plotly_chart(fig_draft, use_container_width=True)
+
+with dr2:
+    st.markdown(f"""
+    <div style="background:#0f1520;border:1px solid #1a2234;
+                border-radius:14px;padding:1rem 1.25rem;margin-top:.5rem">
+        <div style="font-size:13px;font-weight:700;color:#e2e8f0;
+                    margin-bottom:.875rem">Draft Pick Summary</div>
+    """, unsafe_allow_html=True)
+
+    for yr, qual, tp in zip(dk["years"], dk["quality"], dk["top_pick"]):
+        bar_w = int(qual * 100)
+        tier  = ("Elite" if tp <= 5 else
+                 "1st Round" if tp <= 32 else
+                 "2nd Round" if tp <= 64 else "Late Round")
+        tier_color = ("#FFD700" if tp <= 5 else
+                      p if tp <= 32 else
+                      s if tp <= 64 else "#4a5568")
+        st.markdown(f"""
+        <div style="display:flex;align-items:center;gap:.875rem;
+                    margin-bottom:.75rem">
+            <div style="font-size:13px;font-weight:600;
+                        color:#e2e8f0;min-width:44px">{yr}</div>
+            <div style="flex:1;height:10px;background:#1a2234;
+                        border-radius:4px;overflow:hidden">
+                <div style="width:{bar_w}%;height:100%;
+                            background:linear-gradient(90deg,{p},{s});
+                            border-radius:4px"></div>
+            </div>
+            <div style="font-size:12px;font-weight:600;
+                        color:{tier_color};min-width:72px;
+                        text-align:right">#{tp} — {tier}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def get_bundle():

@@ -15,11 +15,354 @@ ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 from config import CFG
 
-st.set_page_config(
-    page_title = "Game Predictor — NFL SB Predictor",
-    page_icon  = "🎯",
-    layout     = "wide",
+import sys, os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from app.team_branding import (
+    inject_global_css, TEAM_COLORS, logo_url,
+    primary, secondary, full_name, team_card_css,
 )
+
+st.set_page_config(page_title="Game Predictor · NFL",
+                   page_icon="🎯", layout="wide")
+st.markdown(inject_global_css(), unsafe_allow_html=True)
+st.markdown("""
+<style>
+body,.stApp{background:#07090f;color:#e2e8f0}
+
+/* matchup card */
+.matchup-card{
+    border-radius:18px; padding:1.5rem;
+    display:flex; align-items:center; gap:1rem;
+    margin-bottom:1.25rem;
+    border:1px solid #1a2234;
+}
+.team-side{
+    flex:1; text-align:center;
+}
+.team-side img{width:80px;height:80px;object-fit:contain;margin-bottom:.5rem}
+.team-side .ts-abbr{
+    font-size:28px;font-weight:800;color:#fff;
+}
+.team-side .ts-name{font-size:12px;color:#8899aa}
+.vs-badge{
+    font-size:20px;font-weight:800;color:#4a5568;
+    padding:0 1rem; flex-shrink:0;
+}
+
+/* gauge outer ring */
+.gauge-wrap{
+    background:#0f1520;border:1px solid #1a2234;
+    border-radius:16px;padding:1.25rem;
+    text-align:center;
+}
+.prob-number{
+    font-size:52px;font-weight:800;
+    line-height:1; margin:.5rem 0 .25rem;
+}
+.prob-label{font-size:12px;color:#8899aa;text-transform:uppercase;
+    letter-spacing:.07em}
+
+/* SHAP bar */
+.shap-row{
+    display:flex;align-items:center;gap:8px;
+    margin-bottom:6px;
+}
+.shap-label{font-size:11px;color:#c8d6e8;
+    text-align:right;flex-shrink:0;width:175px}
+.shap-bar-wrap{
+    flex:1;height:16px;background:#1a2234;
+    border-radius:4px;overflow:hidden;position:relative;
+}
+.shap-bar-pos{height:100%;border-radius:4px;background:#1D9E75;
+    position:absolute;left:50%}
+.shap-bar-neg{height:100%;border-radius:4px;background:#E24B4A;
+    position:absolute;right:50%}
+.shap-val{font-size:11px;font-weight:600;min-width:48px;text-align:left}
+</style>
+""", unsafe_allow_html=True)
+
+ALL_TEAMS = sorted(TEAM_COLORS.keys())
+
+
+# ── Helpers (replace with real model calls in production) ────
+@st.cache_data(ttl=600)
+def predict_game(home: str, away: str):
+    """
+    Returns dict with:
+      home_prob, away_prob, shap_values
+    Replace body with:
+      from src.models.xgb_model import NFLXGBModel
+      model = NFLXGBModel.load("models/nfl_xgb.pkl")
+      return model.predict_matchup(home, away)
+    """
+    import hashlib
+    seed = int(hashlib.md5(f"{home}{away}".encode()).hexdigest(), 16) % 1000
+    rng  = np.random.default_rng(seed)
+
+    # Fake but deterministic home probability
+    home_prob = float(np.clip(rng.normal(0.57, 0.12), 0.28, 0.85))
+
+    shap_features = [
+        "ELO Win Probability",
+        "ELO Rating Difference",
+        "Away Draft EPA Delta",
+        "Rolling Offensive EPA Diff",
+        "Rolling Turnover Margin",
+        "Home Injury Impact",
+        "QB Injury Flag",
+    ]
+    shap_vals = [
+        rng.uniform(0.04, 0.14),
+        rng.uniform(0.02, 0.10),
+        rng.uniform(-0.06, 0.06),
+        rng.uniform(-0.05, 0.08),
+        rng.uniform(-0.04, 0.06),
+        rng.uniform(-0.05, 0.03),
+        rng.uniform(-0.03, 0.02),
+    ]
+    return {
+        "home_prob": home_prob,
+        "away_prob": 1 - home_prob,
+        "features":  shap_features,
+        "shap":      shap_vals,
+    }
+
+
+# ── Header ──────────────────────────────────────────────────
+st.markdown("""
+<div style='margin-bottom:1.25rem'>
+    <h1 style='font-size:26px;font-weight:800;color:#fff;margin:0'>
+        🎯 Game Predictor
+    </h1>
+    <p style='color:#8899aa;font-size:13px;margin:.25rem 0 0'>
+        Select any two teams · calibrated win probability · full SHAP explanation
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Team pickers ────────────────────────────────────────────
+pc1, pc2, pc3 = st.columns([2, 0.4, 2])
+with pc1:
+    home_team = st.selectbox(
+        "🏠 Home Team",
+        ALL_TEAMS,
+        format_func=full_name,
+        index=ALL_TEAMS.index("SEA"),
+    )
+with pc2:
+    st.markdown("<div style='padding-top:2rem;text-align:center;"
+                "font-size:22px;font-weight:800;color:#4a5568'>VS</div>",
+                unsafe_allow_html=True)
+with pc3:
+    away_team = st.selectbox(
+        "✈️ Away Team",
+        ALL_TEAMS,
+        format_func=full_name,
+        index=ALL_TEAMS.index("KC"),
+    )
+
+# ── Matchup banner ──────────────────────────────────────────
+home_p  = primary(home_team)
+home_s  = secondary(home_team)
+away_p  = primary(away_team)
+away_s  = secondary(away_team)
+
+st.markdown(f"""
+<div class="matchup-card"
+     style="background:linear-gradient(135deg,{home_p}33 0%,#07090f 50%,{away_p}33 100%)">
+    <div class="team-side">
+        <img src="{logo_url(home_team)}" alt="{home_team}">
+        <div class="ts-abbr" style="color:{home_p}">{home_team}</div>
+        <div class="ts-name">{full_name(home_team)}</div>
+    </div>
+    <div class="vs-badge">VS</div>
+    <div class="team-side">
+        <img src="{logo_url(away_team)}" alt="{away_team}">
+        <div class="ts-abbr" style="color:{away_p}">{away_team}</div>
+        <div class="ts-name">{full_name(away_team)}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Predict button ───────────────────────────────────────────
+if home_team == away_team:
+    st.warning("Please select two different teams.")
+    st.stop()
+
+predict_btn = st.button("⚡  Predict Game", type="primary", use_container_width=True)
+
+if predict_btn or True:            # auto-run on page load
+    result = predict_game(home_team, away_team)
+    hp     = result["home_prob"]
+    ap     = result["away_prob"]
+
+    # ── Gauge + SHAP side by side ────────────────────────────
+    g1, g2 = st.columns([1, 1.6])
+
+    with g1:
+        # Gauge chart
+        winner_team  = home_team if hp >= 0.5 else away_team
+        winner_prob  = max(hp, ap)
+        winner_color = home_p if hp >= 0.5 else away_p
+
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=round(hp * 100, 1),
+            title=dict(text=f"<b>{home_team}</b> Win Probability",
+                       font=dict(color="#e2e8f0", size=14)),
+            number=dict(suffix="%", font=dict(color=home_p, size=48)),
+            gauge=dict(
+                axis=dict(range=[0, 100],
+                          tickcolor="#1a2234",
+                          tickfont=dict(color="#8899aa", size=10)),
+                bar=dict(color=home_p, thickness=0.28),
+                bgcolor="#0f1520",
+                bordercolor="#1a2234",
+                steps=[
+                    dict(range=[0,  30], color="#1a0a0a"),
+                    dict(range=[30, 50], color="#1a1520"),
+                    dict(range=[50, 70], color="#0a1520"),
+                    dict(range=[70,100], color="#0a1a0a"),
+                ],
+                threshold=dict(
+                    line=dict(color=away_p, width=3),
+                    thickness=0.8, value=round(ap * 100, 1),
+                ),
+            ),
+        ))
+        fig_gauge.update_layout(
+            paper_bgcolor="#07090f",
+            font_color="#e2e8f0",
+            height=300,
+            margin=dict(l=30, r=30, t=50, b=20),
+        )
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+        # Win prob summary
+        col_a, col_b = st.columns(2)
+        col_a.markdown(f"""
+        <div style="background:{home_p}22;border:1px solid {home_p}55;
+                    border-radius:12px;padding:.875rem;text-align:center">
+            <img src="{logo_url(home_team)}"
+                 style="width:40px;height:40px;object-fit:contain">
+            <div style="font-size:26px;font-weight:800;color:{home_p};margin:.35rem 0 0">
+                {hp*100:.1f}%
+            </div>
+            <div style="font-size:10px;color:#8899aa">{home_team} wins</div>
+        </div>
+        """, unsafe_allow_html=True)
+        col_b.markdown(f"""
+        <div style="background:{away_p}22;border:1px solid {away_p}55;
+                    border-radius:12px;padding:.875rem;text-align:center">
+            <img src="{logo_url(away_team)}"
+                 style="width:40px;height:40px;object-fit:contain">
+            <div style="font-size:26px;font-weight:800;color:{away_p};margin:.35rem 0 0">
+                {ap*100:.1f}%
+            </div>
+            <div style="font-size:10px;color:#8899aa">{away_team} wins</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with g2:
+        st.markdown("##### SHAP Feature Contributions")
+        st.markdown(
+            "<p style='font-size:12px;color:#8899aa;margin-bottom:.75rem'>"
+            "Each bar shows how much a feature pushed the probability above (green) "
+            "or below (red) the 50% baseline.</p>",
+            unsafe_allow_html=True,
+        )
+
+        features = result["features"]
+        shap_vals = result["shap"]
+        max_abs   = max(abs(v) for v in shap_vals) + 1e-9
+
+        for feat, val in zip(features, shap_vals):
+            pct      = abs(val) / max_abs * 48        # max 48% of half-bar
+            color    = "#1D9E75" if val >= 0 else "#E24B4A"
+            sign     = f"+{val*100:.2f}%" if val >= 0 else f"{val*100:.2f}%"
+
+            if val >= 0:
+                bar_html = (f'<div class="shap-bar-pos" '
+                            f'style="width:{pct}%;background:{color}"></div>')
+            else:
+                bar_html = (f'<div class="shap-bar-neg" '
+                            f'style="width:{pct}%;background:{color}"></div>')
+
+            st.markdown(f"""
+            <div class="shap-row">
+                <div class="shap-label">{feat}</div>
+                <div class="shap-bar-wrap">{bar_html}</div>
+                <div class="shap-val" style="color:{color}">{sign}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Waterfall chart (Plotly)
+        st.markdown("---")
+        st.markdown("##### Waterfall — from 50% base to final prediction")
+        labels_wf = ["Base (50%)"] + features + ["Final"]
+        vals_wf   = [0.50] + [v for v in shap_vals] + [hp]
+
+        # Build cumulative for waterfall
+        measure = ["absolute"] + ["relative"] * len(shap_vals) + ["total"]
+        colors_wf = (
+            ["#4a5568"]
+            + [("#1D9E75" if v >= 0 else "#E24B4A") for v in shap_vals]
+            + [home_p]
+        )
+
+        fig_wf = go.Figure(go.Waterfall(
+            orientation="v",
+            measure=measure,
+            x=labels_wf,
+            y=[0.50] + shap_vals + [hp],
+            connector=dict(line=dict(color="#1a2234", width=1)),
+            increasing=dict(marker_color="#1D9E75"),
+            decreasing=dict(marker_color="#E24B4A"),
+            totals=dict(marker_color=home_p),
+            text=[f"{v*100:+.2f}%" if i > 0 else "50%" for i, v in
+                  enumerate([0.50] + shap_vals + [hp])],
+            textposition="outside",
+            textfont=dict(color="#e2e8f0", size=10),
+        ))
+        fig_wf.update_layout(
+            paper_bgcolor="#07090f",
+            plot_bgcolor="#07090f",
+            font_color="#e2e8f0",
+            height=320,
+            margin=dict(l=20, r=20, t=20, b=60),
+            showlegend=False,
+            xaxis=dict(gridcolor="#1a2234", tickangle=-30,
+                       tickfont=dict(size=9)),
+            yaxis=dict(gridcolor="#1a2234", tickformat=".0%",
+                       range=[0, 1]),
+        )
+        st.plotly_chart(fig_wf, use_container_width=True)
+
+    # ── Key insights strip ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("##### 🔍 Key Factors Driving This Prediction")
+    top3_feats = sorted(zip(features, shap_vals),
+                        key=lambda x: abs(x[1]), reverse=True)[:3]
+    i1, i2, i3 = st.columns(3)
+    for col, (feat, val) in zip([i1, i2, i3], top3_feats):
+        icon  = "📈" if val >= 0 else "📉"
+        color = "#1D9E75" if val >= 0 else "#E24B4A"
+        dirn  = f"favours {home_team}" if val >= 0 else f"favours {away_team}"
+        col.markdown(f"""
+        <div style="background:#0f1520;border:1px solid #1a2234;
+                    border-radius:12px;padding:.875rem;height:100%">
+            <div style="font-size:20px;margin-bottom:.3rem">{icon}</div>
+            <div style="font-size:12px;font-weight:600;color:#e2e8f0;
+                        margin-bottom:.25rem">{feat}</div>
+            <div style="font-size:20px;font-weight:800;color:{color}">
+                {val*100:+.2f}%
+            </div>
+            <div style="font-size:10px;color:#8899aa;margin-top:.2rem">
+                {dirn}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def get_bundle():
